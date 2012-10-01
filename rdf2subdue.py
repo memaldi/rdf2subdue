@@ -18,22 +18,22 @@ if options.input and options.output:
     subjects = g.query(query)
     query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
     predicates = g.query(query)
-    nodes = [predicate for predicate in predicates if predicate not in subjects]
+    temp_predicates = [predicate for predicate in predicates if predicate not in subjects]
+    temp_subjects = [subject for subject in subjects]
+    nodes = temp_subjects + temp_predicates
     nodes_dict = {}
     i = 1
     for node in nodes:
-        f.write('v %s %s' % (i, str(node[0].encode('utf-8'))))
+        f.write('v %s "%s"\n' % (i, str(node[0].encode('utf-8'))))
         nodes_dict[str(node[0].encode('utf-8'))] = i
         i += 1
-        print node
     edges = ""
     for subject in subjects:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % str(subject[0].encode('utf-8'))
-        print query
         result = g.query(query)
         for p, o in result:
-            edges += 'd %s %s %s\n' % (nodes_dict[str(subject[0].encode('utf-8'))], nodes_dict[str(o)], str(p))
-
+            edges += 'd %s %s "%s"\n' % (nodes_dict[str(subject[0].encode('utf-8'))], nodes_dict[str(o.encode('utf-8'))], str(p.encode('utf-8')))
+    f.write(edges)
 
 else:
     parser.print_help()
