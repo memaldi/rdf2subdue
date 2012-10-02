@@ -17,22 +17,24 @@ if options.input and options.output:
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
     subjects = g.query(query)
     query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
-    predicates = g.query(query)
-    temp_predicates = [predicate for predicate in predicates if predicate not in subjects]
-    temp_subjects = [subject for subject in subjects]
-    nodes = temp_subjects + temp_predicates
+    objects = g.query(query)
+    subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
+    objects_list = [str(o[0].encode('utf-8')) for o in objects]
+    objects_list = [o for o in objects_list if o not in subjects_list]
+    nodes = subjects_list + objects_list
     nodes_dict = {}
     i = 1
     for node in nodes:
-        f.write('v %s "%s"\n' % (i, str(node[0].encode('utf-8'))))
-        nodes_dict[str(node[0].encode('utf-8'))] = i
+        f.write('v %s "%s"\n' % (i, node[0:82]))
+        nodes_dict[node] = i
         i += 1
     edges = ""
-    for subject in subjects:
-        query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % str(subject[0].encode('utf-8'))
+    for subject in subjects_list:
+        query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
         result = g.query(query)
         for p, o in result:
-            edges += 'd %s %s "%s"\n' % (nodes_dict[str(subject[0].encode('utf-8'))], nodes_dict[str(o.encode('utf-8'))], str(p.encode('utf-8')))
+            o = str(o.encode('utf-8'))
+            edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], str(p.encode('utf-8')))
     f.write(edges)
 
 else:
