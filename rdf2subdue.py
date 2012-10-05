@@ -1,8 +1,13 @@
-from rdflib import Graph
+from rdflib import ConjunctiveGraph
 from optparse import OptionParser
 from django.core.validators import URLValidator
+from rdflib import plugin
+from rdflib import store
+import traceback
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
+
+plugin.register('PostgreSQL', store.Store,'rdflib_postgresql.PostgreSQL', 'PostgreSQL')
 
 def prefix(uri):
     if '#' in uri:
@@ -23,13 +28,17 @@ def prefix(uri):
 parser = OptionParser()
 parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
 parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
+parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
 (options, args) = parser.parse_args()
 
-if options.input and options.output:
+if options.input and options.output and options.format:
     try:
-        g = Graph()
-        g.parse(options.input)
+        g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
+        g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
+        g.parse(options.input, format=options.format)
     except Exception as e:
+        traceback.print_exc()
+        print e 
         print '"%s" not found, or incorrect RDF serialization.' % options.input
         exit(-1)
     f = open(options.output, 'w')
@@ -62,25 +71,26 @@ if options.input and options.output:
             if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
                 rdf_type = o
             else:
-                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
+                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], prefix(p))
         #print subject, rdf_type
-        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
+        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], prefix(rdf_type))
 
     val = URLValidator(verify_exists=False)
 
     for obj in objects_list:
-        '''try:
+        try:
             val(obj)
             nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
         except:
-            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]'''
-        nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
     f.write(nodes_str)
     f.write(edges)
 
     f.close()
     eq.close()
+    g.destroy(None)
+    g.close()
 else:
     parser.print_help()
     exit(-1)
