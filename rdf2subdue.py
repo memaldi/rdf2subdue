@@ -3,7 +3,9 @@ from optparse import OptionParser
 from django.core.validators import URLValidator
 from rdflib import plugin
 from rdflib import store
+from time import strftime, localtime
 import traceback
+import os
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
@@ -27,20 +29,31 @@ def prefix(uri):
 
 parser = OptionParser()
 parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
+parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
 parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
 parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
 (options, args) = parser.parse_args()
 
-if options.input and options.output and options.format:
+if (options.input or options.dir) and options.output and options.format:
+    print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     try:
         g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
         g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
-        g.parse(options.input, format=options.format)
+        if options.input != None:
+            print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
+            g.parse(options.input, format=options.format)
+        else:
+            dir_list = os.listdir(options.dir)
+            for file_name in dir_list:
+                print 'Parsing %s...' % file_name
+                g.parse(file_name, format=options.format)
     except Exception as e:
         traceback.print_exc()
         print e 
         print '"%s" not found, or incorrect RDF serialization.' % options.input
         exit(-1)
+    print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     f = open(options.output, 'w')
     eq = open('%s.eq' % options.output, 'w')
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
@@ -71,9 +84,9 @@ if options.input and options.output and options.format:
             if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
                 rdf_type = o
             else:
-                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], prefix(p))
+                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
         #print subject, rdf_type
-        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], prefix(rdf_type))
+        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
 
     val = URLValidator(verify_exists=False)
 
@@ -83,6 +96,7 @@ if options.input and options.output and options.format:
             nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
         except:
             nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+        #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
     f.write(nodes_str)
     f.write(edges)
@@ -91,6 +105,7 @@ if options.input and options.output and options.format:
     eq.close()
     g.destroy(None)
     g.close()
+    print '[%s] Subdue file generated!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
 else:
     parser.print_help()
     exit(-1)
