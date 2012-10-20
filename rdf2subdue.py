@@ -6,6 +6,7 @@ from rdflib import store
 from time import strftime, localtime
 import traceback
 import os
+import sys
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
@@ -36,24 +37,29 @@ parser.add_option("-f", dest="format", help="Format of input file", metavar="FOR
 
 if (options.input or options.dir) and options.output and options.format:
     print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     try:
         g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
         g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
         if options.input != None:
             print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
+	    sys.stdout.flush()
             g.parse(options.input, format=options.format)
         else:
             dir_list = os.listdir(options.dir)
             for file_name in dir_list:
                 print 'Parsing %s...' % file_name
+		sys.stdout.flush()
                 g.parse(file_name, format=options.format)
     except Exception as e:
         traceback.print_exc()
         print e 
         print '"%s" not found, or incorrect RDF serialization.' % options.input
+	sys.stdout.flush()
         exit(-1)
     print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     f = open(options.output, 'w')
     eq = open('%s.eq' % options.output, 'w')
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
@@ -106,6 +112,7 @@ if (options.input or options.dir) and options.output and options.format:
     g.destroy(None)
     g.close()
     print '[%s] Subdue file generated!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
 else:
     parser.print_help()
     exit(-1)
