@@ -48,7 +48,7 @@ if (options.input or options.dir) and options.output and options.format:
         else:
             dir_list = os.listdir(options.dir)
             for file_name in dir_list:
-                print 'Parsing %s...' % file_name
+                print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,file_name)
 		sys.stdout.flush()
                 g.parse(options.dir + '/' + file_name, format=options.format)
     except Exception as e:
