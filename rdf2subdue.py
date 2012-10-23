@@ -40,7 +40,7 @@ if (options.input or options.dir) and options.output and options.format:
     sys.stdout.flush()
     try:
         g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
-        g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
+        g.open("user=,password=,host=localhost,db=rdfstore", create=True)
         if options.input != None:
             print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
 	    sys.stdout.flush()
@@ -50,7 +50,7 @@ if (options.input or options.dir) and options.output and options.format:
             for file_name in dir_list:
                 print 'Parsing %s...' % file_name
 		sys.stdout.flush()
-                g.parse(file_name, format=options.format)
+                g.parse(options.dir + '/' + file_name, format=options.format)
     except Exception as e:
         traceback.print_exc()
         print e 
@@ -62,16 +62,24 @@ if (options.input or options.dir) and options.output and options.format:
     sys.stdout.flush()
     f = open(options.output, 'w')
     eq = open('%s.eq' % options.output, 'w')
+    print '[%s] Retrieving subjects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
     subjects = g.query(query)
+    print '[%s] Retrieving objects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
     objects = g.query(query)
+    print '[%s] Merging nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
     objects_list = [str(o[0].encode('utf-8')) for o in objects]
     objects_list = [o for o in objects_list if o not in subjects_list]
     nodes = subjects_list + objects_list
     nodes_dict = {}
     i = 1
+    print '[%s] Assigning IDs to nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     for node in nodes:
         #f.write('v %s node%s\n' % (i, i))
         #eq.write('%s "%s"\n' % (i, node))
@@ -79,6 +87,8 @@ if (options.input or options.dir) and options.output and options.format:
         i += 1
     edges = ""
     nodes_str = ""
+    print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     for subject in subjects_list:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
         result = g.query(query)
@@ -104,6 +114,8 @@ if (options.input or options.dir) and options.output and options.format:
             nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
         #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
+    print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
     f.write(nodes_str)
     f.write(edges)
 
