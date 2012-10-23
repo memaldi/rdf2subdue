@@ -4,6 +4,7 @@ from django.core.validators import URLValidator
 from rdflib import plugin
 from rdflib import store
 from time import strftime, localtime
+from multiprocessing import Process, Pipe
 import traceback
 import os
 import sys
@@ -28,19 +29,28 @@ def prefix(uri):
     else:
         return uri
 
+def rdfcollection2list(collection, conn):
+    result_list = [str(x[0].encode('utf-8')) for x in collection]
+    conn.send(result_list)
+
 parser = OptionParser()
 parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
 parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
 parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
 parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
+parser.add_option("-b", dest="max_branches", help="Maximum branches", metavar="MAX_BRANCHES")
+
 (options, args) = parser.parse_args()
 
 if (options.input or options.dir) and options.output and options.format:
+    max_branches = 0
+    if options.max_branches != None:
+        max_branches = options.max_branches
     print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     try:
         g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
-        g.open("user=,password=,host=localhost,db=rdfstore", create=True)
+        g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
         if options.input != None:
             print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
 	    sys.stdout.flush()
@@ -71,8 +81,25 @@ if (options.input or options.dir) and options.output and options.format:
     objects = g.query(query)
     print '[%s] Merging nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
-    subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
-    objects_list = [str(o[0].encode('utf-8')) for o in objects]
+    
+    subjects_list = []
+    objects_list = []
+    if max_branches > 0:
+        ps_parent_conn, ps_child_conn = Pipe()
+        ps = Process(target=rdfcollection2list, args=(subjects, ps_child_conn,))
+        ps.start()
+        po_parent_conn, po_child_conn = Pipe()
+        po = Process(target=rdfcollection2list, args=(objects, po_child_conn,))
+        po.start()
+        ps.join()
+        po.join()
+        subjects_list = ps_parent_conn.recv()
+        objects_list = po_parent_conn.recv()
+    else:
+        subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
+        objects_list = [str(o[0].encode('utf-8')) for o in objects]
+    #print 'Length of subjects_list: %s' % len(subjects_list)
+    #print 'Length of objects_list: %s' % len(objects_list)
     objects_list = [o for o in objects_list if o not in subjects_list]
     nodes = subjects_list + objects_list
     nodes_dict = {}
