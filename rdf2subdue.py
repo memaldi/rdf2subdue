@@ -61,7 +61,6 @@ if (options.input or options.dir) and options.output and options.format:
     print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     f = open(options.output, 'w')
-    eq = open('%s.eq' % options.output, 'w')
     print '[%s] Retrieving subjects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
@@ -82,7 +81,6 @@ if (options.input or options.dir) and options.output and options.format:
     sys.stdout.flush()
     for node in nodes:
         #f.write('v %s node%s\n' % (i, i))
-        #eq.write('%s "%s"\n' % (i, node))
         nodes_dict[node] = i
         i += 1
     edges = ""
@@ -120,7 +118,6 @@ if (options.input or options.dir) and options.output and options.format:
     f.write(edges)
 
     f.close()
-    eq.close()
     g.destroy(None)
     g.close()
     print '[%s] Subdue file generated!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
