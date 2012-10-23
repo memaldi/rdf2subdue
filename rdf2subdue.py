@@ -5,9 +5,11 @@ from rdflib import plugin
 from rdflib import store
 from time import strftime, localtime
 from multiprocessing import Process, Pipe
+from itertools import repeat
 import traceback
 import os
 import sys
+import traceback
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
@@ -32,6 +34,37 @@ def prefix(uri):
 def rdfcollection2list(collection, conn):
     result_list = [str(x[0].encode('utf-8')) for x in collection]
     conn.send(result_list)
+    conn.close()
+
+def subjects2nodes(subjects_list, nodes_dict, g , conn):
+    nodes_str = ""
+    edges = ""
+    for subject in subjects_list:
+        query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
+        result = g.query(query)
+        rdf_type = "Unknown"
+        for p, o in result:
+            p = str(p.encode('utf-8'))
+            o = str(o.encode('utf-8'))
+            if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
+                rdf_type = o
+            else:
+                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
+        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
+    conn.send(edges)
+    conn.close()
+
+def objects2nodes(objects_list, nodes_dict, conn):
+    nodes_str = ""
+    val = URLValidator(verify_exists=False)
+    for obj in objects_list:
+        try:
+            val(obj)
+            nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
+        except:
+            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+    conn.send(nodes_str)
+    conn.close()
 
 parser = OptionParser()
 parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
@@ -45,7 +78,7 @@ parser.add_option("-b", dest="max_branches", help="Maximum branches", metavar="M
 if (options.input or options.dir) and options.output and options.format:
     max_branches = 0
     if options.max_branches != None:
-        max_branches = options.max_branches
+        max_branches = int(options.max_branches)
     print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     try:
@@ -95,11 +128,15 @@ if (options.input or options.dir) and options.output and options.format:
         po.join()
         subjects_list = ps_parent_conn.recv()
         objects_list = po_parent_conn.recv()
+        ps_parent_conn.close()
+        ps_child_conn.close()
+        po_parent_conn.close()
+        po_child_conn.close()
+
     else:
         subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
         objects_list = [str(o[0].encode('utf-8')) for o in objects]
-    #print 'Length of subjects_list: %s' % len(subjects_list)
-    #print 'Length of objects_list: %s' % len(objects_list)
+
     objects_list = [o for o in objects_list if o not in subjects_list]
     nodes = subjects_list + objects_list
     nodes_dict = {}
@@ -114,6 +151,24 @@ if (options.input or options.dir) and options.output and options.format:
     nodes_str = ""
     print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
+
+    '''if max_branches > 0:
+        ps_parent_conn, ps_child_conn = Pipe()
+        ps = Process(target=subjects2nodes, args=(subjects_list, nodes_dict, g, ps_child_conn,))
+        ps.start()
+        po_parent_conn, po_child_conn = Pipe()
+        po = Process(target=objects2nodes, args=(objects_list, nodes_dict, po_child_conn,))
+        po.start()
+        ps.join()
+        po.join()
+        subjects_result = ps_parent_conn.recv()
+        print subjects_result
+        subjects_nodes = subjects_result[0]
+        edges = subjects_result[1]
+        objects_nodes = po_parent_conn.recv()
+        
+        nodes_str = subjects_result + objects_nodes
+    else:'''
     for subject in subjects_list:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
         result = g.query(query)
@@ -137,7 +192,7 @@ if (options.input or options.dir) and options.output and options.format:
             nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
         except:
             nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
-        #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+            #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
