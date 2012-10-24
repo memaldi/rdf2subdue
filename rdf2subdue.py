@@ -4,12 +4,16 @@ from django.core.validators import URLValidator
 from rdflib import plugin
 from rdflib import store
 from time import strftime, localtime
-from multiprocessing import Process, Pipe
+from multiprocessing import Process, Pipe, Value
 from itertools import repeat
 import traceback
 import os
 import sys
 import traceback
+import string
+from ctypes import c_int, c_char_p
+
+
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
@@ -36,49 +40,57 @@ def rdfcollection2list(collection, conn):
     conn.send(result_list)
     conn.close()
 
-def subjects2nodes(subjects_list, nodes_dict, g , conn):
-    nodes_str = ""
-    edges = ""
+def subjects2nodes(subjects_list, nodes_dict, nodes_str, edges_wrapper):
+    g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
+    g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=False)
     for subject in subjects_list:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
+        
         result = g.query(query)
+        
         rdf_type = "Unknown"
         for p, o in result:
+            
             p = str(p.encode('utf-8'))
             o = str(o.encode('utf-8'))
             if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
                 rdf_type = o
             else:
-                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
-        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
-    conn.send(edges)
-    conn.close()
+                edges_wrapper.value += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
+        nodes_str.value += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
+    print nodes_str
+    print len(nodes_str.value)
+    print edges_wrapper
+    print len(edges_wrapper.value)
+    g.close()
 
-def objects2nodes(objects_list, nodes_dict, conn):
-    nodes_str = ""
+def objects2nodes(objects_list, nodes_dict, nodes_str):
+    #nodes_str = ""
     val = URLValidator(verify_exists=False)
     for obj in objects_list:
         try:
             val(obj)
-            nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
+            nodes_str.value += 'v %s "URI"\n' % nodes_dict[obj]
         except:
-            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
-    conn.send(nodes_str)
-    conn.close()
+            nodes_str.value += 'v %s "Literal"\n' % nodes_dict[obj]
+    print nodes_str
+    print len(nodes_str.value)
+    #conn.send(nodes_str)
+    #conn.close()
 
 parser = OptionParser()
 parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
 parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
 parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
 parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
-parser.add_option("-b", dest="max_branches", help="Maximum branches", metavar="MAX_BRANCHES")
+parser.add_option("-p", dest="parallelization", default=False, action="store_true", help="Use parallelization")
 
 (options, args) = parser.parse_args()
 
 if (options.input or options.dir) and options.output and options.format:
-    max_branches = 0
-    if options.max_branches != None:
-        max_branches = int(options.max_branches)
+    #parallelization = False
+    #if options.parallelization != None:
+    #    parallelization = True
     print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     try:
@@ -86,19 +98,21 @@ if (options.input or options.dir) and options.output and options.format:
         g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
         if options.input != None:
             print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
-	    sys.stdout.flush()
+            sys.stdout.flush()
             g.parse(options.input, format=options.format)
+            g.commit()
         else:
             dir_list = os.listdir(options.dir)
             for file_name in dir_list:
                 print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,file_name)
-		sys.stdout.flush()
+                sys.stdout.flush()
                 g.parse(options.dir + '/' + file_name, format=options.format)
+                g.commit()
     except Exception as e:
         traceback.print_exc()
         print e 
         print '"%s" not found, or incorrect RDF serialization.' % options.input
-	sys.stdout.flush()
+        sys.stdout.flush()
         exit(-1)
     print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
@@ -117,7 +131,7 @@ if (options.input or options.dir) and options.output and options.format:
     
     subjects_list = []
     objects_list = []
-    if max_branches > 0:
+    if options.parallelization:
         ps_parent_conn, ps_child_conn = Pipe()
         ps = Process(target=rdfcollection2list, args=(subjects, ps_child_conn,))
         ps.start()
@@ -152,47 +166,63 @@ if (options.input or options.dir) and options.output and options.format:
     print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    '''if max_branches > 0:
-        ps_parent_conn, ps_child_conn = Pipe()
-        ps = Process(target=subjects2nodes, args=(subjects_list, nodes_dict, g, ps_child_conn,))
+    if options.parallelization > 0:
+        #ps_parent_conn, ps_child_conn = Pipe()
+        subjects_nodes = Value(c_char_p, '')
+        #subjects_nodes.value = ''
+        edges_wrapper = Value(c_char_p, '')
+        #edges_wrapper.value = 0
+        ps = Process(target=subjects2nodes, args=(subjects_list, nodes_dict, subjects_nodes, edges_wrapper,))
         ps.start()
-        po_parent_conn, po_child_conn = Pipe()
-        po = Process(target=objects2nodes, args=(objects_list, nodes_dict, po_child_conn,))
+        #po_parent_conn, po_child_conn = Pipe()
+        objects_nodes = Value(c_char_p, '')
+        #objects_nodes.value = ''
+        po = Process(target=objects2nodes, args=(objects_list, nodes_dict, objects_nodes,))
         po.start()
         ps.join()
         po.join()
-        subjects_result = ps_parent_conn.recv()
-        print subjects_result
-        subjects_nodes = subjects_result[0]
-        edges = subjects_result[1]
-        objects_nodes = po_parent_conn.recv()
-        
-        nodes_str = subjects_result + objects_nodes
-    else:'''
-    for subject in subjects_list:
-        query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
-        result = g.query(query)
-        rdf_type = "Unknown"
-        for p, o in result:
-            p = str(p.encode('utf-8'))
-            o = str(o.encode('utf-8'))
-            #print p
-            if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
-                rdf_type = o
-            else:
-                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
-        #print subject, rdf_type
-        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
+        #subjects_result = ps_parent_conn.recv()
+        #print subjects_result
+        #subjects_nodes = subjects_result[0]
+        #edges = subjects_result[1]
+        #objects_nodes = po_parent_conn.recv()
+        print 'Hey!'
+        print subjects_nodes
+        print len(subjects_nodes.value)
+        print objects_nodes
+        print len(objects_nodes.value)
 
-    val = URLValidator(verify_exists=False)
+        nodes_str = subjects_nodes.value + objects_nodes.value
+        print 'Hey! Hey!'
+        print edges_wrapper.value
+        #print len(edges_wrapper.value)
+        edges = edges_wrapper.value
+        print 'Hey! Hey! Hey!'
+    else:
+        for subject in subjects_list:
+            query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
+            result = g.query(query)
+            rdf_type = "Unknown"
+            for p, o in result:
+                p = str(p.encode('utf-8'))
+                o = str(o.encode('utf-8'))
+                #print p
+                if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
+                    rdf_type = o
+                else:
+                    edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
+            #print subject, rdf_type
+            nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
 
-    for obj in objects_list:
-        try:
-            val(obj)
-            nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
-        except:
-            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
-            #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+        val = URLValidator(verify_exists=False)
+
+        for obj in objects_list:
+            try:
+                val(obj)
+                nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
+            except:
+                nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+                #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
