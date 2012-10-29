@@ -13,8 +13,6 @@ import traceback
 import string
 from ctypes import c_int, c_char_p
 
-
-
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
 plugin.register('PostgreSQL', store.Store,'rdflib_postgresql.PostgreSQL', 'PostgreSQL')
@@ -78,28 +76,19 @@ def objects2nodes(objects_list, nodes_dict, nodes_str):
     #conn.send(nodes_str)
     #conn.close()
 
-parser = OptionParser()
-parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
-parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
-parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
-parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
-parser.add_option("-p", dest="parallelization", default=False, action="store_true", help="Use parallelization")
-
-(options, args) = parser.parse_args()
-
-if (options.input or options.dir) and options.output and options.format:
-    #parallelization = False
-    #if options.parallelization != None:
-    #    parallelization = True
+def initialize(config_file):
     print '[%s] Initializing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
+    
+    config = __import__(config_file)
+    
     try:
-        g = ConjunctiveGraph(store='PostgreSQL', identifier='http://rdf2subdue/')
-        g.open("user=postgres,password=p0stgr3s,host=localhost,db=rdfstore", create=True)
-        if options.input != None:
-            print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,options.input)
+        g = ConjunctiveGraph(config.graph_store, config.graph_identifier)
+        g.open(config.db_configstring, create=True)
+        if config.input_file != None:
+            print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()), config.input_file)
             sys.stdout.flush()
-            g.parse(options.input, format=options.format)
+            g.parse(config.input_file, format=config.input_format)
             g.commit()
         else:
             dir_list = os.listdir(options.dir)
@@ -114,10 +103,30 @@ if (options.input or options.dir) and options.output and options.format:
         print '"%s" not found, or incorrect RDF serialization.' % options.input
         sys.stdout.flush()
         exit(-1)
+    return g, config
+
+parser = OptionParser()
+#parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
+#parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
+#parser.add_option("-o", dest="output", help="Output graph file", metavar="OUTPUT")
+#parser.add_option("-f", dest="format", help="Format of input file", metavar="FORMAT")
+parser.add_option("-c", dest="config", help="Configuration file", metavar="CONFIG")
+
+(options, args) = parser.parse_args()
+
+if options.config:
+
+    g, config = initialize(options.config)
+    engine = create_engine(config.alchemy_configstring)
+    connection = engine.connect()
+    connection.execute('DELETE FROM nodes')
+    connection.execute('DELETE FROM edges')
+    connection.execute('ALTER SEQUENCE nodes_id_seq RESTART WITH 1')
+    
     print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
-    f = open(options.output, 'w')
+    f = open(config.output_file, 'w')
     print '[%s] Retrieving subjects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
@@ -129,27 +138,8 @@ if (options.input or options.dir) and options.output and options.format:
     print '[%s] Merging nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     
-    subjects_list = []
-    objects_list = []
-    if options.parallelization:
-        ps_parent_conn, ps_child_conn = Pipe()
-        ps = Process(target=rdfcollection2list, args=(subjects, ps_child_conn,))
-        ps.start()
-        po_parent_conn, po_child_conn = Pipe()
-        po = Process(target=rdfcollection2list, args=(objects, po_child_conn,))
-        po.start()
-        ps.join()
-        po.join()
-        subjects_list = ps_parent_conn.recv()
-        objects_list = po_parent_conn.recv()
-        ps_parent_conn.close()
-        ps_child_conn.close()
-        po_parent_conn.close()
-        po_child_conn.close()
-
-    else:
-        subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
-        objects_list = [str(o[0].encode('utf-8')) for o in objects]
+    subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
+    objects_list = [str(o[0].encode('utf-8')) for o in objects]
 
     objects_list = [o for o in objects_list if o not in subjects_list]
     nodes = subjects_list + objects_list
@@ -166,69 +156,37 @@ if (options.input or options.dir) and options.output and options.format:
     print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    if options.parallelization > 0:
-        #ps_parent_conn, ps_child_conn = Pipe()
-        subjects_nodes = Value(c_char_p, '')
-        #subjects_nodes.value = ''
-        edges_wrapper = Value(c_char_p, '')
-        #edges_wrapper.value = 0
-        ps = Process(target=subjects2nodes, args=(subjects_list, nodes_dict, subjects_nodes, edges_wrapper,))
-        ps.start()
-        #po_parent_conn, po_child_conn = Pipe()
-        objects_nodes = Value(c_char_p, '')
-        #objects_nodes.value = ''
-        po = Process(target=objects2nodes, args=(objects_list, nodes_dict, objects_nodes,))
-        po.start()
-        ps.join()
-        po.join()
-        #subjects_result = ps_parent_conn.recv()
-        #print subjects_result
-        #subjects_nodes = subjects_result[0]
-        #edges = subjects_result[1]
-        #objects_nodes = po_parent_conn.recv()
-        print 'Hey!'
-        print subjects_nodes
-        print len(subjects_nodes.value)
-        print objects_nodes
-        print len(objects_nodes.value)
+    for subject in subjects_list:
+        query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
+        result = g.query(query)
+        rdf_type = "Unknown"
+        for p, o in result:
+            p = str(p.encode('utf-8'))
+            o = str(o.encode('utf-8'))
+            #print p
+            if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
+                rdf_type = o
+            else:
+                edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
+        #print subject, rdf_type
+        nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
 
-        nodes_str = subjects_nodes.value + objects_nodes.value
-        print 'Hey! Hey!'
-        print edges_wrapper.value
-        #print len(edges_wrapper.value)
-        edges = edges_wrapper.value
-        print 'Hey! Hey! Hey!'
-    else:
-        for subject in subjects_list:
-            query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
-            result = g.query(query)
-            rdf_type = "Unknown"
-            for p, o in result:
-                p = str(p.encode('utf-8'))
-                o = str(o.encode('utf-8'))
-                #print p
-                if p == 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
-                    rdf_type = o
-                else:
-                    edges += 'u %s %s "%s"\n' % (nodes_dict[subject], nodes_dict[o], p)
-            #print subject, rdf_type
-            nodes_str += 'v %s "%s"\n' % (nodes_dict[subject], rdf_type)
+    val = URLValidator(verify_exists=False)
 
-        val = URLValidator(verify_exists=False)
-
-        for obj in objects_list:
-            try:
-                val(obj)
-                nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
-            except:
-                nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
-                #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+    for obj in objects_list:
+        try:
+            val(obj)
+            nodes_str += 'v %s "URI"\n' % nodes_dict[obj]
+        except:
+            nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+            #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
 
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     f.write(nodes_str)
     f.write(edges)
 
+    connection.close()
     f.close()
     g.destroy(None)
     g.close()
