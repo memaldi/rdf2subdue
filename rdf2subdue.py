@@ -6,7 +6,7 @@ from rdflib import store
 from time import strftime, localtime
 from multiprocessing import Pool
 from itertools import repeat
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Table, MetaData, Column, Integer, String
 import os
 import sys
 import traceback
@@ -39,7 +39,7 @@ def initialize(config_file):
     except Exception as e:
         traceback.print_exc()
         print e 
-        print '"%s" not found, or incorrect RDF serialization.' % options.input
+        print '"%s" not found, or incorrect RDF serialization.' % config.input_file
         sys.stdout.flush()
         exit(-1)
     return g, config
@@ -78,6 +78,18 @@ if options.config:
     g, config = initialize(options.config)
     engine = create_engine(config.alchemy_configstring)
     connection = engine.connect()
+    
+    '''Table('nodes', MetaData(None),
+            Column('id', Integer, primary_key = True),
+            Column('label', String(200)),
+            Column('uri', String(500)),
+            Column('type', String(20)))
+    Table('edges', MetaData(None),
+            Column('id', Integer, primary_key = True),
+            Column('destination', Integer),
+            Column('origin', Integer),
+            Column('label', String(200)))'''
+
     connection.execute('DELETE FROM edges')
     connection.execute('DELETE FROM nodes')
     connection.execute('ALTER SEQUENCE nodes_id_seq RESTART WITH 1')
@@ -156,7 +168,7 @@ if options.config:
 
     connection.close()
     f.close()
-    g.destroy(None)
+    g.destroy(config.db_path)
     g.close()
     print '[%s] Subdue file generated!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()

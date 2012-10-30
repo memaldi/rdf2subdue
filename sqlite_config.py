@@ -1,18 +1,18 @@
 ## RDFLib Graph configuration
 graph_identifier = 'http://rdfstore/'
-graph_store = "PostgreSQL"
+graph_store = "SQLite"
 
 ## Multiprocessing cofinguration
 
 max_branches = 10
 
 ## Postgresql configuration
-db_configstring = "user=postgres,password=p0stgr3s,host=localhost,db=rdfstore"
+db_configstring = "/tmp/bd.sqlite"
 db_identifier = "rdfstore"
-db_path = None
+db_path = "/tmp/bd.sqlite"
 
 ## SQLAlchemy configuration
-alchemy_configstring = "postgresql://postgres:p0stgr3s@localhost:5432/rdf2subdue"
+alchemy_configstring = "sqlite:///bd.sqlite"
 
 ## Input file(s) configuration
 
