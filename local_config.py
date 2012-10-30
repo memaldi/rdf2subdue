@@ -1,6 +1,10 @@
 ## RDFLib Graph configuration
 graph_identifier = 'http://rdfstore/'
-graph_store= "PostgreSQL"
+graph_store = "PostgreSQL"
+
+## Multiprocessing cofinguration
+
+max_branches = 10
 
 ## Postgresql configuration
 db_configstring = "user=postgres,password=p0stgr3s,host=localhost,db=rdfstore"

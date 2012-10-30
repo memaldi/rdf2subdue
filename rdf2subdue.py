@@ -4,7 +4,7 @@ from django.core.validators import URLValidator
 from rdflib import plugin
 from rdflib import store
 from time import strftime, localtime
-from multiprocessing import Process, Pipe, Value
+from multiprocessing import Process, Pipe, Value, Pool
 from itertools import repeat
 from sqlalchemy import create_engine
 import traceback
@@ -106,6 +106,30 @@ def initialize(config_file):
         exit(-1)
     return g, config
 
+def calculate_edges((offset_limit, config)):
+    g = ConjunctiveGraph(config['graph_store'], config['graph_identifier'])
+    g.open(config['db_configstring'], create=False)
+    engine = create_engine(config['alchemy_configstring'])
+    connection = engine.connect()
+    query = "SELECT id, uri FROM nodes WHERE type = 'subject' ORDER BY id OFFSET %s LIMIT %s" % offset_limit
+    results = connection.execute(query)
+
+    for result in results:
+        query = "SELECT ?p ?o WHERE { <%s> ?p ?o }" % result['uri']
+        items = g.query(query)
+        for item in items:
+            if item[0] != 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
+                query = "SELECT id FROM nodes WHERE uri = '%s'" % item[1]
+                ids = connection.execute(query)
+                node_id = -1
+                if ids.rowcount > 0:
+                    for id_s in ids:
+                        node_id = id_s[0]
+                    query = "INSERT INTO edges (origin, destination, label) VALUES ('%s', '%s', '%s')" % (result['id'], node_id, item[0])
+                    connection.execute(query)
+    g.close()
+    connection.close()
+
 parser = OptionParser()
 #parser.add_option("-i", dest="input", help="Input RDF file.", metavar="INPUT")
 #parser.add_option("-d", dest="dir", help="Input RDF files dir", metavar="INPUTDIR")
@@ -120,8 +144,8 @@ if options.config:
     g, config = initialize(options.config)
     engine = create_engine(config.alchemy_configstring)
     connection = engine.connect()
-    connection.execute('DELETE FROM nodes')
     connection.execute('DELETE FROM edges')
+    connection.execute('DELETE FROM nodes')
     connection.execute('ALTER SEQUENCE nodes_id_seq RESTART WITH 1')
     
     print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
@@ -149,7 +173,7 @@ if options.config:
         if len(item_type_list) > 0:
             for item_type in item_type_list:
                 s_type = item_type[0]
-            connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), s_type.encode('utf-8')))
+            connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), s_type.encode('utf-8'), "subject"))
 
     print '[%s] Inserting objects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
@@ -161,9 +185,9 @@ if options.config:
         if results.rowcount <= 0:
             try:
                 validator(item[0])
-                connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), "URI"))
+                connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "URI", "object"))
             except:
-                connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), "Literal"))
+                connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "Literal", "object"))
 
     '''objects_list = [str(o[0].encode('utf-8')) for o in objects]
     objects_list = [o for o in objects_list if o not in subjects_list]
@@ -180,10 +204,31 @@ if options.config:
     edges = ""
     nodes_str = ""
     '''
-    print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    print '[%s] Calculating offsets and limits for multiprocessing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    results = connection.execute("SELECT * FROM NODES ORDER BY id ASC LIMIT 1 OFFSET 100")
+    results = connection.execute("SELECT MAX(id) FROM nodes WHERE type = 'subject'")
+    max_rows = -1
+    for result in results:
+        max_rows = result[0]
+
+    cluster_size = max_rows / config.max_branches
+    mod_size = max_rows % config.max_branches
+    offset_limit = []
+    for i in range(config.max_branches-1):
+        offset = i * cluster_size
+        offset_limit.append((offset, cluster_size))
+    offset = (config.max_branches - 1) * cluster_size
+    limit = cluster_size + mod_size
+    offset_limit.append((offset, limit))
+
+    print '[%s] Launching parallel queries...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
+    pool = Pool(config.max_branches)
+    config_dict ={'graph_identifier': config.graph_identifier, 'graph_store': config.graph_store, 'db_configstring': config.db_configstring, 'alchemy_configstring': config.alchemy_configstring}
+    pool.map(calculate_edges, zip(offset_limit, repeat(config_dict)))
+
+    #results = connection.execute("SELECT * FROM NODES ORDER BY id ASC LIMIT 1 OFFSET 100")
 
     '''for subject in subjects_list:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
@@ -213,8 +258,16 @@ if options.config:
 
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
-    f.write(nodes_str)
-    f.write(edges)
+
+    nodes = connection.execute("SELECT id, label FROM nodes ORDER BY id")
+    for node in nodes:
+        f.write('v %s %s\n' % (node['id'], node['label']))
+
+    edges = connection.execute("SELECT origin, destination, label FROM edges")
+    for edge in edges:
+        f.write('e %s %s %s\n' % (edge['origin'], edge['destination'], edge['label'])) 
+    #f.write(nodes_str)
+    #f.write(edges)
 
     connection.close()
     f.close()
