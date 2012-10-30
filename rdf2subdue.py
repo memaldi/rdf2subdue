@@ -6,6 +6,7 @@ from rdflib import store
 from time import strftime, localtime
 from multiprocessing import Process, Pipe, Value
 from itertools import repeat
+from sqlalchemy import create_engine
 import traceback
 import os
 import sys
@@ -135,12 +136,36 @@ if options.config:
     sys.stdout.flush()
     query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
     objects = g.query(query)
-    print '[%s] Merging nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    #print '[%s] Merging nodes...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    #sys.stdout.flush()
+    
+    #subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
+
+    print '[%s] Inserting subjects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
+    for item in subjects:
+        item_type_list = g.query('SELECT ?o WHERE { <%s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o } LIMIT 1' % item[0])
+        s_type = None
+        if len(item_type_list) > 0:
+            for item_type in item_type_list:
+                s_type = item_type[0]
+            connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), s_type.encode('utf-8')))
+
+    print '[%s] Inserting objects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     
-    subjects_list = [str(s[0].encode('utf-8')) for s in subjects]
-    objects_list = [str(o[0].encode('utf-8')) for o in objects]
+    validator = URLValidator(verify_exists=False)
+    
+    for item in objects:
+        results = connection.execute("SELECT id FROM nodes WHERE uri = '%s'" % str(item[0].encode('utf-8')))
+        if results.rowcount <= 0:
+            try:
+                validator(item[0])
+                connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), "URI"))
+            except:
+                connection.execute("INSERT INTO nodes (uri, label) VALUES ('%s', '%s')" % (str(item[0].encode('utf-8')), "Literal"))
 
+    '''objects_list = [str(o[0].encode('utf-8')) for o in objects]
     objects_list = [o for o in objects_list if o not in subjects_list]
     nodes = subjects_list + objects_list
     nodes_dict = {}
@@ -151,12 +176,16 @@ if options.config:
         #f.write('v %s node%s\n' % (i, i))
         nodes_dict[node] = i
         i += 1
+    
     edges = ""
     nodes_str = ""
+    '''
     print '[%s] Generating nodes and edges...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    for subject in subjects_list:
+    results = connection.execute("SELECT * FROM NODES ORDER BY id ASC LIMIT 1 OFFSET 100")
+
+    '''for subject in subjects_list:
         query = 'SELECT ?p ?o WHERE {<%s> ?p ?o}' % subject
         result = g.query(query)
         rdf_type = "Unknown"
@@ -180,6 +209,7 @@ if options.config:
         except:
             nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
             #nodes_str += 'v %s "Literal"\n' % nodes_dict[obj]
+    '''
 
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
