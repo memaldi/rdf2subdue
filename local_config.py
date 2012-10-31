@@ -7,6 +7,7 @@ graph_store = "PostgreSQL"
 max_branches = 10
 
 ## Postgresql configuration
+db_engine = 'Postgresql'
 db_configstring = "user=postgres,password=p0stgr3s,host=localhost,db=rdfstore"
 db_identifier = "rdfstore"
 db_path = None

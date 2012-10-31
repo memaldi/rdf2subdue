@@ -7,6 +7,7 @@ graph_store = "SQLite"
 max_branches = 10
 
 ## Postgresql configuration
+db_engine = 'MySQL'
 db_configstring = "/tmp/bd.sqlite"
 db_identifier = "rdfstore"
 db_path = "/tmp/bd.sqlite"

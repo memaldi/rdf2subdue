@@ -1,3 +1,4 @@
+# coding=iso-8859-15
 from rdflib import ConjunctiveGraph
 from optparse import OptionParser
 from django.core.validators import URLValidator
@@ -6,10 +7,69 @@ from rdflib import store
 from time import strftime, localtime
 from multiprocessing import Pool
 from itertools import repeat
-from sqlalchemy import create_engine, Table, MetaData, Column, Integer, String
+from sqlalchemy import create_engine, MetaData, Column, Integer, String, ForeignKey, func
+from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 import os
 import sys
 import traceback
+
+metadata = MetaData()
+Base = declarative_base(metadata=metadata)
+
+class Node(Base):
+    __tablename__ = 'node'
+
+    node_id = Column(Integer, primary_key=True)
+    node_label = Column(String)
+    node_uri = Column(String)
+    node_type = Column(String)
+
+    def __init__(self, node_uri, node_label, node_type):
+        self.node_uri = node_uri
+        self.node_label = node_label
+        self.node_type = node_type
+
+    def add_neighbors(self, edge_label, *nodes):
+        for node in nodes:
+            Edge(self, node, edge_label=edge_label)
+        return self
+
+    def higher_neighbors(self):
+        return [x.higher_node for x in self.lower_edges]
+
+    def lower_neighbors(self):
+        return [x.lower_node for x in self.higher_edges]
+
+class Edge(Base):
+    __tablename__ = 'edge'
+
+    edge_label = Column(String)
+    
+    edge_id = Column(Integer, primary_key=True)
+
+    lower_id = Column(Integer,
+                        ForeignKey('node.node_id'))
+
+    higher_id = Column(Integer,
+                        ForeignKey('node.node_id'))
+
+    lower_node = relationship(Node,
+                                primaryjoin=lower_id==Node.node_id,
+                                backref='lower_edges')
+    higher_node = relationship(Node,
+                                primaryjoin=higher_id==Node.node_id,
+                                backref='higher_edges')
+
+    # here we have lower.node_id <= higher.node_id
+    def __init__(self, n1, n2, edge_label):
+        if n1.node_id < n2.node_id:
+            self.lower_node = n1
+            self.higher_node = n2
+        else:
+            self.lower_node = n2
+            self.higher_node = n1
+        self.edge_label = edge_label
 
 PREFIXES = {'http://rdfs.org/sioc/ns': 'sioc:', 'http://xmlns.com/foaf/0.1/': 'foaf:', 'http://www.daml.org/2001/10/html/airport-ont': 'daml:', 'http://swrc.ontoware.org/ontology': 'swrc:', 'http://purl.org/ontology/bibo/': 'bibo:', 'http://www.w3.org/2000/01/rdf-schema': 'rdf:', 'http://purl.org/dc/terms/': 'dcterms:', 'http://www.w3.org/2002/07/owl': 'owl:', 'http://purl.org/dc/elements/1.1/': 'dc:', 'http://purl.org/vocab/aiiso-roles/schema': 'aiiso:', 'http://purl.org/vocab/relationship/': 'rel:', 'http://www.w3.org/2000/10/swap/pim/contact': 'contact:', 'http://kota.s12.xrea.com/vocab/uranai': 'uranai:', 'http://webns.net/mvcb/': 'mvcb:'}
 
@@ -48,25 +108,32 @@ def calculate_edges((offset_limit, config)):
     g = ConjunctiveGraph(config['graph_store'], config['graph_identifier'])
     g.open(config['db_configstring'], create=False)
     engine = create_engine(config['alchemy_configstring'])
-    connection = engine.connect()
-    query = "SELECT id, uri FROM nodes WHERE type = 'subject' ORDER BY id OFFSET %s LIMIT %s" % offset_limit
-    results = connection.execute(query)
-
+    #connection = engine.connect()
+    #query = "SELECT id, uri FROM nodes WHERE type = 'subject' ORDER BY id OFFSET %s LIMIT %s" % offset_limit
+    #results = connection.execute(query)
+    
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    results = session.query(Node).filter_by(node_type="subject").order_by(Node.node_id.desc()).offset(offset_limit[0]).limit(offset_limit[1]).all()
+    
     for result in results:
-        query = "SELECT ?p ?o WHERE { <%s> ?p ?o }" % result['uri']
+        query = "SELECT ?p ?o WHERE { <%s> ?p ?o }" % result.node_uri
         items = g.query(query)
         for item in items:
-            if item[0] != 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type':
-                query = "SELECT id FROM nodes WHERE uri = '%s'" % item[1]
-                ids = connection.execute(query)
-                node_id = -1
-                if ids.rowcount > 0:
-                    for id_s in ids:
-                        node_id = id_s[0]
-                    query = "INSERT INTO edges (origin, destination, label) VALUES ('%s', '%s', '%s')" % (result['id'], node_id, item[0])
-                    connection.execute(query)
+            if str(item[0]) != "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
+                #query = "SELECT id FROM nodes WHERE uri = '%s'" % item[1]
+                #ids = connection.execute(query)
+                neighbors = session.query(Node).filter_by(node_uri=item[1]).all()
+                if len(neighbors) > 0:                    
+                    #query = "INSERT INTO edges (origin, destination, label) VALUES ('%s', '%s', '%s')" % (result[0], node_id, item[0])
+                    #connection.execute(query)
+                    for neighbor in neighbors:
+                        result.add_neighbors(str(item[0]), neighbor)
+        session.commit()
     g.close()
-    connection.close()
+    #connection.close()
+    session.close()
 
 parser = OptionParser()
 parser.add_option("-c", dest="config", help="Configuration file", metavar="CONFIG")
@@ -79,20 +146,23 @@ if options.config:
     engine = create_engine(config.alchemy_configstring)
     connection = engine.connect()
     
-    '''Table('nodes', MetaData(None),
-            Column('id', Integer, primary_key = True),
-            Column('label', String(200)),
-            Column('uri', String(500)),
-            Column('type', String(20)))
-    Table('edges', MetaData(None),
-            Column('id', Integer, primary_key = True),
-            Column('destination', Integer),
-            Column('origin', Integer),
-            Column('label', String(200)))'''
+    Base.metadata.create_all(engine)
 
-    connection.execute('DELETE FROM edges')
-    connection.execute('DELETE FROM nodes')
-    connection.execute('ALTER SEQUENCE nodes_id_seq RESTART WITH 1')
+    '''connection.execute('DELETE FROM edges')
+    connection.execute('DELETE FROM nodes')'''
+    if config.db_engine == 'Postgresql':
+        connection.execute('ALTER SEQUENCE node_node_id_seq RESTART WITH 1')
+    
+    connection.close()
+    
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    edges = session.query(Edge).delete()
+    nodes = session.query(Node).delete()
+    #session.delete(edges)
+    #session.delete(nodes)
+    session.commit()
     
     print '[%s] FINISHED!' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     print '[%s] Generating subdue graph file...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
@@ -115,7 +185,10 @@ if options.config:
         if len(item_type_list) > 0:
             for item_type in item_type_list:
                 s_type = item_type[0]
-            connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), s_type.encode('utf-8'), "subject"))
+            #connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), s_type.encode('utf-8'), "subject"))
+            node = Node(node_uri=str(item[0].encode('utf-8')), node_label=s_type.encode('utf-8'), node_type="subject")
+            session.add(node)
+    session.commit()
 
     print '[%s] Inserting objects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
@@ -123,18 +196,24 @@ if options.config:
     validator = URLValidator(verify_exists=False)
     
     for item in objects:
-        results = connection.execute("SELECT id FROM nodes WHERE uri = '%s'" % str(item[0].encode('utf-8')))
-        if results.rowcount <= 0:
+        #results = connection.execute("SELECT id FROM nodes WHERE uri = '%s'" % str(item[0].encode('utf-8')))
+        results = session.query(Node).filter_by(node_uri=str(item[0].encode('utf-8'))).all()
+        if len(results) <= 0:
             try:
                 validator(item[0])
-                connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "URI", "object"))
+                #connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "URI", "object"))
+                node = Node(node_uri=str(item[0].encode('utf-8')), node_label="URI", node_type="object")
+                session.add(node)
             except:
-                connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "Literal", "object"))
-
+                #connection.execute("INSERT INTO nodes (uri, label, type) VALUES ('%s', '%s', '%s')" % (str(item[0].encode('utf-8')), "Literal", "object"))
+                node = Node(node_uri=str(item[0].encode('utf-8')), node_label="Literal", node_type="object")
+                session.add(node)
+    session.commit()
     print '[%s] Calculating offsets and limits for multiprocessing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    results = connection.execute("SELECT MAX(id) FROM nodes WHERE type = 'subject'")
+    #results = connection.execute("SELECT MAX(id) FROM nodes WHERE type = 'subject'")
+    results = session.query(func.max(Node.node_id)).filter_by(node_type="subject").all()
     max_rows = -1
     for result in results:
         max_rows = result[0]
@@ -158,15 +237,17 @@ if options.config:
     print '[%s] Writing files...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
 
-    nodes = connection.execute("SELECT id, label FROM nodes ORDER BY id")
+    #nodes = connection.execute("SELECT id, label FROM nodes ORDER BY id")
+    nodes = session.query(Node.node_id, Node.node_label).order_by(Node.node_id).all()
     for node in nodes:
-        f.write('v %s %s\n' % (node['id'], node['label']))
+        f.write('v %s %s\n' % (node.node_id, node.node_label))
 
-    edges = connection.execute("SELECT origin, destination, label FROM edges")
+    #edges = connection.execute("SELECT origin, destination, label FROM edges")
+    edges = session.query(Edge.lower_id, Edge.higher_id, Edge.edge_label).all()
     for edge in edges:
-        f.write('e %s %s %s\n' % (edge['origin'], edge['destination'], edge['label'])) 
+        f.write('e %s %s %s\n' % (edge.lower_id, edge.higher_id, edge.edge_label)) 
 
-    connection.close()
+    session.close()
     f.close()
     g.destroy(config.db_path)
     g.close()
