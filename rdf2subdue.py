@@ -90,11 +90,11 @@ def initialize(config_file):
             g.parse(config.input_file, format=config.input_format)
             g.commit()
         else:
-            dir_list = os.listdir(options.dir)
+            dir_list = os.listdir(config.input_dir)
             for file_name in dir_list:
                 print '[%s] Parsing %s...' % (strftime("%a, %d %b %Y %H:%M:%S", localtime()) ,file_name)
                 sys.stdout.flush()
-                g.parse(options.dir + '/' + file_name, format=options.format)
+                g.parse(config.input_dir + '/' + file_name, format=config.input_format)
                 g.commit()
     except Exception as e:
         traceback.print_exc()
