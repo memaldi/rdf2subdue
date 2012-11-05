@@ -160,11 +160,7 @@ if options.config:
     sys.stdout.flush()
     query = 'SELECT DISTINCT ?s WHERE {?s ?p ?o}'
     subjects = g.query(query)
-    print '[%s] Retrieving objects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
-    sys.stdout.flush()
-    query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
-    objects = g.query(query)
-
+    
     print '[%s] Inserting subjects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
     for item in subjects:
@@ -176,6 +172,13 @@ if options.config:
             node = Node(node_uri=str(item[0].encode('utf-8')), node_label=s_type.encode('utf-8'), node_type="subject")
             session.add(node)
     session.commit()
+
+    del subjects
+
+    print '[%s] Retrieving objects...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
+    sys.stdout.flush()
+    query = 'SELECT DISTINCT ?o WHERE {?s ?p ?o}'
+    objects = g.query(query)
 
     print '[%s] Inserting objects into database...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
@@ -195,6 +198,8 @@ if options.config:
     session.commit()
     print '[%s] Calculating offsets and limits for multiprocessing...' % strftime("%a, %d %b %Y %H:%M:%S", localtime())
     sys.stdout.flush()
+
+    del objects
 
     results = session.query(func.max(Node.node_id)).filter_by(node_type="subject").all()
     max_rows = -1
